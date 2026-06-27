@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EAS Translation Engine</title>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#f5f7fa;color:#1d2630}
+    header{background:#0057A8;color:white;padding:16px 22px;display:flex;align-items:center;gap:14px}
+    header img{width:52px;height:52px;border-radius:50%;background:white}
+    main{display:grid;grid-template-columns:320px 1fr 38vw;gap:12px;padding:12px;height:calc(100vh - 84px)}
+    section{background:white;border:1px solid #d9e1ea;border-radius:14px;overflow:auto;padding:14px}
+    button,select,input,textarea{font:inherit;border-radius:10px;padding:9px;border:1px solid #d9e1ea;width:100%;box-sizing:border-box;margin:4px 0 10px}
+    button{background:#0057A8;color:white;font-weight:bold;cursor:pointer}.yellow{background:#F2E500;color:#1d2500}.red{background:#9a2f2f}.segment{border:1px solid #d9e1ea;border-left:5px solid #cbd7e4;border-radius:10px;padding:9px;margin-bottom:8px;cursor:pointer}.segment.imported,.segment.approved,.segment.translated{background:#eaf8ed;border-left-color:#39a85a}.segment.returned{background:#fff1f1;border-left-color:#9a2f2f}.num{font-weight:bold;color:#0057A8}textarea{height:220px}.box{background:#f7f9fc;border:1px solid #d9e1ea;border-radius:12px;padding:12px;white-space:pre-wrap}.term{border:1px solid #d9e1ea;border-radius:10px;padding:8px;margin-bottom:8px}.term b{color:#0057A8}mark{background:#fff4a6}.page{position:relative;margin:auto;width:max-content;background:white;box-shadow:0 2px 12px #0002}.page img{display:block;max-width:100%}.hl{position:absolute;border:3px solid #F2E500;background:#f2e50033}
+  </style>
+</head>
+<body>
+<header><img src="assets/eac-logo.svg" alt="EAC"><div><h1>EAS Translation Engine v1.9</h1><div>Tree Planting Standard translation workspace</div></div></header>
+<main>
+<section><h2>Settings</h2><select id="lang"></select><input id="prev" type="file" accept=".pdf,.txt,.csv"><button class="yellow" onclick="openProject()">Open / create project</button><select id="filter" onchange="loadSegments()"><option value="needs_work">Needs work</option><option value="all">All</option></select><h2>Sections</h2><div id="segments"></div><h2>Glossary</h2><div id="glossary"></div></section>
+<section><h2>Translation editor</h2><div id="source" class="box">Create a project first.</div><label><input id="auto" type="checkbox" checked style="width:auto"> AI suggestion auto-mode</label><textarea id="translation"></textarea><button onclick="save('translated')">Save</button><button class="yellow" onclick="save('approved')">Approve</button><button class="red" onclick="save('returned')">Return</button><div id="notes" class="box">No AI notes.</div></section>
+<section><h2>PDF preview</h2><div id="pdf" class="box">Select a segment.</div></section>
+</main>
+<script>
+let project=null, segments=[], current=null, terms=[];
+const esc=s=>String(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+async function api(path,opt){const r=await fetch(path,opt); if(!r.ok) throw new Error(await r.text()); return r.json();}
+async function init(){const l=await api('/languages'); document.getElementById('lang').innerHTML=l.map(x=>`<option value="${x.code}" ${x.code==='cs'?'selected':''}>${x.name} (${x.code})</option>`).join('');}
+async function openProject(){project=await api('/projects/open?target_language='+document.getElementById('lang').value,{method:'POST'}); if(document.getElementById('prev').files[0]) await importPrev(); await loadSegments(); await loadGlossary();}
+async function importPrev(){const fd=new FormData(); fd.append('file',document.getElementById('prev').files[0]); await api(`/projects/${project.id}/import-translation`,{method:'POST',body:fd});}
+async function loadSegments(){if(!project)return; segments=await api(`/projects/${project.id}/segments?filter=${document.getElementById('filter').value}`); document.getElementById('segments').innerHTML=segments.map(s=>`<div class="segment ${s.translation_status||''}" onclick="selectSeg(${s.id})"><span class="num">${s.paragraph_number||s.section_number}</span> ${s.translation_status||''}<br><small>${esc(s.source_text).slice(0,130)}</small></div>`).join('');}
+async function loadGlossary(){terms=await api(`/projects/${project.id}/glossary`); document.getElementById('glossary').innerHTML=terms.map(t=>`<div class="term" onclick="editTerm(${t.id})"><b>${esc(t.source_term)}</b><br>${esc(t.target_term||'—')}</div>`).join('');}
+function applyTerms(text){let out=text||''; for(const t of terms){if(t.source_term&&t.target_term) out=out.replaceAll(t.source_term,t.target_term)} return out;}
+async function selectSeg(id){current=segments.find(s=>s.id===id); document.getElementById('source').innerHTML=esc(current.source_text); document.getElementById('translation').value=applyTerms(current.translated_text||''); await showPdf(); if(document.getElementById('auto').checked&&!document.getElementById('translation').value) await ai();}
+async function ai(){const r=await api(`/projects/${project.id}/segments/${current.id}/ai-suggestion`,{method:'POST'}); document.getElementById('translation').value=applyTerms(r.suggested_translation); document.getElementById('notes').textContent=(r.notes||[]).join('\n');}
+async function showPdf(){const l=await api(`/segments/${current.id}/location`); if(!l.page_image_url){document.getElementById('pdf').textContent='No preview.';return;} document.getElementById('pdf').innerHTML=`<div class="page"><img src="${l.page_image_url}?v=${Date.now()}" style="width:100%"></div>`;}
+async function save(status){if(!current)return; await api(`/translations/${current.translation_id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({translated_text:document.getElementById('translation').value,status})}); await loadGlossary(); await loadSegments();}
+async function editTerm(id){const t=terms.find(x=>x.id===id); const val=prompt('Target term for: '+t.source_term,t.target_term||''); if(val===null)return; await api(`/projects/${project.id}/glossary/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({target_term:val,status:'confirmed'})}); await loadGlossary();}
+init().catch(e=>alert(e.message));
+</script>
+</body>
+</html>
