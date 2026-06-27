@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local database and runtime output
+backend/translator_engine.db
+backend/storage/pages/*
+!backend/storage/pages/.gitkeep
+backend/storage/uploads/*
+!backend/storage/uploads/.gitkeep
+
+# Large bundled standards are copied locally, not committed
+backend/storage/samples/*.pdf
+
+# macOS
+.DS_Store
